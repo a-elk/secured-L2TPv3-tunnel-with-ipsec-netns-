@@ -1,0 +1,220 @@
+#!/bin/bash -x
+
+# créer les namespaces pour les hôtes
+ip netns add post3
+ip netns add post4
+ip netns add post1
+ip netns add post2
+ip netns add r1
+ip netns add r2
+ip netns add rA
+ip netns add rB
+
+# créer le switch
+ovs-vsctl add-br internet 
+ovs-vsctl add-br s1 
+ovs-vsctl add-br s2
+ovs-vsctl add-br s3
+ovs-vsctl add-br s4
+
+
+# créer les liens
+ip link add post3-eth0 type veth peer name s1-post3
+ip link add post4-eth0 type veth peer name s1-post4
+ip link add r1-eth0 type veth peer name s1-r1
+ip link add r1-eth1 type veth peer name s3-r1
+ip link add rA-eth0 type veth peer name s3-rA
+ip link add rA-eth1 type veth peer name internet-rA
+
+
+ip link add post1-eth0 type veth peer name s2-post1
+ip link add post2-eth0 type veth peer name s2-post2
+ip link add r2-eth0 type veth peer name s2-r2
+ip link add r2-eth1 type veth peer name s4-r2
+ip link add rB-eth0 type veth peer name s4-rB
+ip link add rB-eth1 type veth peer name internet-rB
+
+# accrocher les liens aux namespaces
+ip link set post3-eth0 netns post3
+ip link set post4-eth0 netns post4
+ip link set post1-eth0 netns post1
+ip link set post2-eth0 netns post2
+#routeurs
+ip link set r1-eth0 netns r1
+ip link set r1-eth1 netns r1
+ip link set r2-eth0 netns r2
+ip link set r2-eth1 netns r2
+ip link set rA-eth0 netns rA
+ip link set rA-eth1 netns rA
+ip link set rB-eth0 netns rB
+ip link set rB-eth1 netns rB
+
+# connecter les liens au switch
+ovs-vsctl add-port s1 s1-post3
+ovs-vsctl add-port s1 s1-post4 
+ovs-vsctl add-port s1 s1-r1
+ovs-vsctl add-port s2 s2-post1 
+ovs-vsctl add-port s2 s2-post2
+ovs-vsctl add-port s2 s2-r2
+ovs-vsctl add-port s3 s3-r1
+ovs-vsctl add-port s3 s3-rA
+ovs-vsctl add-port s4 s4-r2
+ovs-vsctl add-port s4 s4-rB
+ovs-vsctl add-port internet internet-rA
+ovs-vsctl add-port internet internet-rB
+
+# activer les interfaces du namespace root
+ip link set dev s1-post3 up
+ip link set dev s1-post4 up
+ip link set dev s1-r1 up
+ip link set dev s2-post1 up
+ip link set dev s2-post2 up
+ip link set dev s2-r2 up
+ip link set dev s3-r1 up
+ip link set dev s3-rA up
+ip link set dev s4-r2 up
+ip link set dev s4-rB up
+
+ip link set dev internet-rA up
+ip link set dev internet-rB up
+
+# activer les interfaces des namespaces post3 et post4 
+ip netns exec post3 ip link set dev post3-eth0 up
+ip netns exec post3 ip link set dev lo up
+ip netns exec post4 ip link set dev post4-eth0 up
+ip netns exec post4 ip link set dev lo up
+ip netns exec post1 ip link set dev post1-eth0 up
+ip netns exec post1 ip link set dev lo up
+ip netns exec post2 ip link set dev post2-eth0 up
+ip netns exec post2 ip link set dev lo up
+
+# activer les interfaces des namespaces r1 et r2 
+ip netns exec r1 ip link set dev r1-eth0 up
+ip netns exec r1 ip link set dev r1-eth1 up
+ip netns exec r2 ip link set dev r2-eth0 up
+ip netns exec r2 ip link set dev r2-eth1 up
+ip netns exec rA ip link set dev rA-eth0 up
+ip netns exec rA ip link set dev rA-eth1 up
+ip netns exec rB ip link set dev rB-eth0 up
+ip netns exec rB ip link set dev rB-eth1 up
+
+ip netns exec r1 ip link set dev lo up
+ip netns exec r2 ip link set dev lo up
+ip netns exec rA ip link set dev lo up
+ip netns exec rB ip link set dev lo up
+
+ip netns exec post3 ifconfig post3-eth0 hw ether 66:20:00:00:00:00 
+ip netns exec post4 ifconfig post4-eth0 hw ether 66:03:03:03:03:03 
+ip netns exec post1 ifconfig post1-eth0 hw ether 66:06:06:06:06:06
+ip netns exec post2 ifconfig post2-eth0 hw ether 66:09:09:09:09:09
+
+
+# configurer les réseaux sur s1, s2 et internet
+ip netns exec r1 ip a add dev r1-eth1 172.16.1.253/24
+ip netns exec rA ip a add dev rA-eth0 172.16.1.254/24
+ip netns exec rA ip a add dev rA-eth1 10.87.0.253/24
+ip netns exec r2 ip a add dev r2-eth1 172.16.2.253/24
+ip netns exec rB ip a add dev rB-eth0 172.16.2.254/24
+ip netns exec rB ip a add dev rB-eth1 10.87.0.252/24
+ip netns exec rA ip r add default via 10.87.0.1
+ip netns exec rB ip r add default via 10.87.0.1
+ip netns exec r1 ip r add default via 172.16.1.254
+ip netns exec r2 ip r add default via 172.16.2.254
+
+
+ip netns exec post3 ip link add link post3-eth0 name post3-eth0.200 type vlan id 200
+ip netns exec post1 ip link add link post1-eth0 name post1-eth0.200 type vlan id 200
+ip netns exec post4 ip link add link post4-eth0 name post4-eth0.100 type vlan id 100
+ip netns exec post2 ip link add link post2-eth0 name post2-eth0.100 type vlan id 100
+
+# pour l'encapsulation udp
+#ip netns exec r1 ip l2tp add tunnel remote 172.16.2.253 local 172.16.1.253 encap udp udp_sport 8000 udp_dport 8001 tunnel_id 3000 peer_tunnel_id 4000 
+ip netns exec r1 ip l2tp add tunnel remote 172.16.2.253 local 172.16.1.253 encap ip tunnel_id 3000 peer_tunnel_id 4000
+#ip netns exec r1 ip link add eoip1 type gretap remote 172.16.2.253 local 172.16.1.253 nopmtudisc
+#ip netns exec r1 ip link set dev eoip1 up
+
+ip netns exec r1 ip l2tp add session tunnel_id 3000 session_id 1000 peer_session_id 2000
+ip netns exec r1 ip link set l2tpeth0 up
+ip netns exec r1 brctl addbr tunnel
+ip netns exec r1 brctl addif tunnel l2tpeth0
+ip netns exec r1 brctl addif tunnel r1-eth0
+ip netns exec r1 ip link set tunnel up
+ip netns exec r1 ip link add link tunnel name tunnel.100 type vlan id 100
+ip netns exec r1 ip link set tunnel.100 up
+ip netns exec r1 ip link add link tunnel name tunnel.200 type vlan id 200
+ip netns exec r1 ip link set tunnel.200 up
+ip netns exec r1 ip addr add 192.168.100.254/24 dev tunnel.100
+ip netns exec r1 ip addr add 192.168.200.254/24 dev tunnel.200
+ip netns exec r1 ip link set dev l2tpeth0 mtu 1500
+
+ip netns exec r2 ip l2tp add tunnel remote 172.16.1.253 local 172.16.2.253 encap ip tunnel_id 4000 peer_tunnel_id 3000
+#ip netns exec r2 ip l2tp add tunnel remote 172.16.1.253 local 172.16.2.253  encap udp udp_sport 8001 udp_dport 8000 tunnel_id 4000 peer_tunnel_id 3000
+#ip netns exec r2 ip link add eoip1 type gretap remote 172.16.1.253 local 172.16.2.253 nopmtudisc
+#ip netns exec r2 ip link set dev eoip1 up
+ip netns exec r2 ip l2tp add session tunnel_id 4000 session_id 2000 peer_session_id 1000
+ip netns exec r2 ip link set l2tpeth0 up
+ip netns exec r2 brctl addbr tunnel
+ip netns exec r2 brctl addif tunnel l2tpeth0
+ip netns exec r2 brctl addif tunnel r2-eth0
+ip netns exec r2 ip link set tunnel up
+ip netns exec r2 ip link add link tunnel name tunnel.100 type vlan id 100
+ip netns exec r2 ip link set tunnel.100 up
+ip netns exec r2 ip link add link tunnel name tunnel.200 type vlan id 200
+ip netns exec r2 ip link set tunnel.200 up
+ip netns exec r2 ip addr add 192.168.100.253/24 dev tunnel.100
+ip netns exec r2 ip addr add 192.168.200.253/24 dev tunnel.200
+ip netns exec r2 ip link set dev l2tpeth0 mtu 1500
+
+#ipsec
+:'ip netns exec r2 ip xfrm state flush
+ip netns exec r2 ip xfrm policy flush
+ip netns exec r1 ip xfrm state flush
+ip netns exec r1 ip xfrm policy flush
+
+ip netns exec r1 ip xfrm state add src 172.16.1.253 dst 172.16.2.253 proto esp spi 0x12345678 reqid 0x12345678 mode transport auth sha256 0x323730ed6f1b9ff0cb084af15b197e862b7c18424a7cdfb74cd385ae23bc4f17 enc "rfc3686(ctr(aes))" 0x27b90b8aec1ee32a8150a664e8faac761e2d305b 
+
+ip netns exec r1 ip xfrm state add src 172.16.2.253 dst 172.16.1.253 proto esp spi 0x12345678 reqid 0x12345678 mode transport  auth sha256 0x44d65c50b7581fd3c8169cf1fa0ebb24e0d55755b1dc43a98b539bb144f2067f  enc "rfc3686(ctr(aes))" 0x9df7983cb7c7eb2af01d88d36e462b5f01d10bc1
+
+ip netns exec r1 ip xfrm policy add src 172.16.2.253 dst 172.16.1.253 dir in tmpl src 172.16.2.253 dst 172.16.1.253 proto esp reqid 0x12345678 mode transport
+    
+ip netns exec r1 ip xfrm policy add src 172.16.1.253 dst 172.16.2.253 dir out tmpl src 172.16.1.253 dst 172.16.2.253  proto esp reqid 0x12345678 mode transport
+
+ip netns exec r2 ip xfrm state add src 172.16.1.253 dst 172.16.2.253 proto esp spi 0x12345678 reqid 0x12345678 mode transport auth sha256 0x323730ed6f1b9ff0cb084af15b197e862b7c18424a7cdfb74cd385ae23bc4f17 enc "rfc3686(ctr(aes))" 0x27b90b8aec1ee32a8150a664e8faac761e2d305b 
+
+ip netns exec r2 ip xfrm state add src 172.16.2.253 dst 172.16.1.253 proto esp spi 0x12345678 reqid 0x12345678 mode transport  auth sha256 0x44d65c50b7581fd3c8169cf1fa0ebb24e0d55755b1dc43a98b539bb144f2067f  enc "rfc3686(ctr(aes))" 0x9df7983cb7c7eb2af01d88d36e462b5f01d10bc1
+ip netns exec r2 ip xfrm policy add src 172.16.2.253 dst 172.16.1.253 dir out tmpl src 172.16.2.253 dst 172.16.1.253 proto esp reqid 0x12345678 mode transport
+    
+ip netns exec r2 ip xfrm policy add src 172.16.1.253 dst 172.16.2.253 dir in tmpl src 172.16.1.253 dst 172.16.2.253  proto esp reqid 0x12345678 mode transport'
+
+    
+# activer le routage sur r1 et r2
+ip link set internet up
+ip a add dev internet 10.87.0.1/24
+ip route add dev internet 172.16.1.0/24 via 10.87.0.253 proto static
+ip route add dev internet 172.16.2.0/24 via 10.87.0.252 proto static
+sudo sysctl net.ipv4.conf.all.forwarding=1
+ip netns exec r1 sudo sysctl net.ipv4.conf.all.forwarding=1
+ip netns exec r2 sudo sysctl net.ipv4.conf.all.forwarding=1
+ip netns exec rA sudo sysctl net.ipv4.conf.all.forwarding=1
+ip netns exec rB sudo sysctl net.ipv4.conf.all.forwarding=1
+
+iptables -t nat -A POSTROUTING -s 172.16.1.0/24 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s 172.16.2.0/24 -j MASQUERADE
+
+ip netns exec r1 iptables -t nat -A POSTROUTING -s 192.168.100.0/24 -j MASQUERADE
+ip netns exec r1 iptables -t nat -A POSTROUTING -s 192.168.200.0/24 -j MASQUERADE
+
+ip netns exec r2 iptables -t nat -A POSTROUTING -s 192.168.100.0/24 -j MASQUERADE
+ip netns exec r2 iptables -t nat -A POSTROUTING -s 192.168.200.0/24 -j MASQUERADE
+
+#interdiction par ip rule
+:'ip netns exec r1 ip rule add from 192.168.100.0/24 to 192.168.200.0/24  prio 16050 prohibit
+ip netns exec r1 ip rule add from 192.168.200.0/24 to 192.168.100.0/24  prio 16050 prohibit
+ip netns exec r2 ip rule add from 192.168.100.0/24 to 192.168.200.0/24  prio 16050 prohibit
+ip netns exec r2 ip rule add from 192.168.200.0/24 to 192.168.100.0/24  prio 16050 prohibit'
+
+#interdiction par iptables
+ip netns exec r1 iptables -t filter -A FORWARD -s 192.168.100.0/24 -d 192.168.200.0/24 -j DROP
+ip netns exec r1 iptables -t filter -A FORWARD -s 192.168.200.0/24 -d 192.168.100.0/24 -j DROP
+ip netns exec r2 iptables -t filter -A FORWARD -s 192.168.100.0/24 -d 192.168.200.0/24 -j DROP
+ip netns exec r2 iptables -t filter -A FORWARD -s 192.168.200.0/24 -d 192.168.100.0/24 -j DROP
